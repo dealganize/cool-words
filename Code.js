@@ -119,15 +119,17 @@ function sendWordOfTheDay() {
   if (!entries.length) return;
 
   const entry = pickWordOfTheDay(entries);
-  const dictionary = lookupWord(String(entry.row[0]).trim());
+  const word = String(entry.row[0]).trim();
+  const dictionary = lookupWord(word);
+  const coach = askWordCoach(word, String(entry.row[1] || "").trim(), String(entry.row[2] || "").trim());
 
   MailApp.sendEmail({
     // Sends to whoever owns the script, so no address is hard-coded
     to: Session.getEffectiveUser().getEmail(),
     subject: "Cool Word of the Day",
     name: "CoolWords",
-    htmlBody: buildWordOfTheDayHtml(entry, headers, dictionary),
-    body: buildWordOfTheDayText(entry, headers, dictionary)
+    htmlBody: buildWordOfTheDayHtml(entry, headers, dictionary, coach),
+    body: buildWordOfTheDayText(entry, headers, dictionary, coach)
   });
 }
 
@@ -205,11 +207,120 @@ function lookupWord(word) {
   }
 }
 
+// ---------- AI word coach (Claude) ----------
+//
+// Set the API key once in Project Settings > Script Properties as
+// ANTHROPIC_API_KEY. It is never stored in the code. If the key is missing
+// or the call fails, the email still goes out without the AI section.
+
+const CLAUDE_MODEL = "claude-opus-5-5";
+
+const WORD_COACH_SCHEMA = {
+  type: "object",
+  properties: {
+    sentences: {
+      type: "array",
+      items: { type: "string" },
+      description: "Two fresh, natural example sentences using the word"
+    },
+    memoryTip: {
+      type: "string",
+      description: "One short, memorable way to remember the meaning"
+    },
+    quizSentence: {
+      type: "string",
+      description: "A sentence with the word replaced by ____"
+    },
+    quizOptions: {
+      type: "array",
+      items: { type: "string" },
+      description: "Four options, one of which is the word"
+    }
+  },
+  required: ["sentences", "memoryTip", "quizSentence", "quizOptions"],
+  additionalProperties: false
+};
+
+function askWordCoach(word, meaning, context) {
+  const apiKey = PropertiesService.getScriptProperties().getProperty("ANTHROPIC_API_KEY");
+  if (!apiKey) return null;
+
+  const prompt = [
+    `Word: ${word}`,
+    meaning ? `Meaning I noted: ${meaning}` : "",
+    context ? `Where I came across it:\n${context}` : "",
+    "",
+    "I'm building my vocabulary and this is today's word. Write:",
+    "- two new example sentences in everyday British English, different in tone from where I found it",
+    "- one short memory tip for the meaning (an image, a word link, or a contrast)",
+    "- a fill-in-the-blank quiz sentence with four single-word options: the word itself and three plausible but wrong ones",
+    "Keep everything short enough to read in a morning email."
+  ].filter(Boolean).join("\n");
+
+  try {
+    const response = UrlFetchApp.fetch("https://api.anthropic.com/v1/messages", {
+      method: "post",
+      contentType: "application/json",
+      muteHttpExceptions: true,
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2026-10-21",
+        "anthropic-beta": "server-side-fallback-2026-07-01"
+      },
+      payload: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: 4000,
+        fallbacks: "default",
+        output_config: {
+          effort: "low",
+          format: { type: "json_schema", schema: WORD_COACH_SCHEMA }
+        },
+        messages: [{ role: "user", content: prompt }]
+      })
+    });
+
+    if (response.getResponseCode() !== 200) {
+      console.warn("Word coach HTTP " + response.getResponseCode() + ": " + response.getContentText());
+      return null;
+    }
+
+    const message = JSON.parse(response.getContentText());
+    if (message.stop_reason !== "end_turn") {
+      console.warn("Word coach stopped early: " + message.stop_reason);
+      return null;
+    }
+
+    const textBlock = (message.content || []).find(block => block.type === "text");
+    if (!textBlock) return null;
+
+    const coach = JSON.parse(textBlock.text);
+    coach.quizOptions = shuffle(coach.quizOptions);
+    return coach;
+  } catch (err) {
+    console.warn("Word coach failed for " + word + ": " + err);
+    return null;
+  }
+}
+
+function shuffle(items) {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+// Run by hand from the Apps Script editor to check the AI section without sending an email
+function testWordCoach() {
+  console.log(JSON.stringify(askWordCoach("sonder", "the realisation that every passer-by has a life as vivid as your own", ""), null, 2));
+}
+
 function getColumnLabel(headers, i) {
   return String(headers[i] || WOTD_DEFAULT_LABELS[i] || `Column ${i + 1}`).trim();
 }
 
-function buildWordOfTheDayHtml(entry, headers, dictionary) {
+function buildWordOfTheDayHtml(entry, headers, dictionary, coach) {
   const word = String(entry.row[0]).trim();
   const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "EEEE d MMMM");
   const lines = value => String(value || "").split("\n").map(s => s.trim()).filter(Boolean);
@@ -267,6 +378,18 @@ function buildWordOfTheDayHtml(entry, headers, dictionary) {
     ? dictionary.antonyms.map(a => chip(a, "#fbeeee")).join("")
     : "";
 
+  const coachHtml = coach ? `
+    ${coach.sentences.map(s => `
+      <div style="border-left:3px solid #3d3a8c;padding:6px 12px;margin:0 0 8px;font-size:16px;line-height:1.5;color:#222222;">${escapeHtml(s)}</div>`).join("")}
+    <div style="background:#f6f5ff;border-radius:8px;padding:12px 16px;margin:12px 0;font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#333333;">
+      🧠 <b>Remember it:</b> ${escapeHtml(coach.memoryTip)}
+    </div>
+    <div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#333333;">
+      <b>Quick quiz:</b> ${escapeHtml(coach.quizSentence)}
+      <div style="margin-top:8px;">${coach.quizOptions.map(o => chip(o, "#ffffff")).join("")}</div>
+      <div style="font-size:12px;color:#999999;">(The answer is today's word.)</div>
+    </div>` : "";
+
   const lookupUrl = "https://www.google.com/search?q=define+" + encodeURIComponent(word);
 
   return `
@@ -278,6 +401,7 @@ function buildWordOfTheDayHtml(entry, headers, dictionary) {
       ${subtitle ? `<div style="font-size:16px;margin-top:4px;color:#dcdaf7;">${escapeHtml(subtitle)}</div>` : ""}
     </td></tr>
     ${section("From your CoolWords sheet", detailsHtml)}
+    ${section("Your AI word coach", coachHtml)}
     ${section("More ways to use it", examplesHtml)}
     ${section("Similar words", synonymsHtml)}
     ${section("Opposites", antonymsHtml)}
@@ -294,7 +418,7 @@ function buildWordOfTheDayHtml(entry, headers, dictionary) {
 }
 
 
-function buildWordOfTheDayText(entry, headers, dictionary) {
+function buildWordOfTheDayText(entry, headers, dictionary, coach) {
   const parts = ["COOL WORD OF THE DAY: " + String(entry.row[0]).trim(), ""];
 
   entry.row.forEach((value, i) => {
@@ -302,6 +426,11 @@ function buildWordOfTheDayText(entry, headers, dictionary) {
     parts.push(getColumnLabel(headers, i) + ":\n" + (text || "—") + "\n");
   });
 
+  if (coach) {
+    parts.push("AI word coach:\n" + coach.sentences.map(s => "- " + s).join("\n"));
+    parts.push("Remember it: " + coach.memoryTip);
+    parts.push("Quick quiz: " + coach.quizSentence + "\nOptions: " + coach.quizOptions.join(" / ") + "\n");
+  }
   if (dictionary?.examples.length) {
     parts.push("More examples:\n" + dictionary.examples.map(ex => "- " + ex.example).join("\n"));
   }
