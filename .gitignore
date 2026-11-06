@@ -1,6 +1,9 @@
 # clasp login token - never commit
 .clasprc.json
 
+# Compiled output (built from src/ by `npm run build`)
+dist/
+
 # Local tooling
 node_modules/
 .env

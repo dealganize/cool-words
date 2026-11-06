@@ -1,0 +1,20 @@
+﻿{
+  "name": "cool-words",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Google Apps Script vocabulary tracker with a daily AI-assisted Word of the Day email",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dealganize/cool-words.git"
+  },
+  "scripts": {
+    "build": "tsc && node -e \"require('fs').copyFileSync('src/appsscript.json', 'dist/appsscript.json')\"",
+    "typecheck": "tsc --noEmit",
+    "push": "npm run build && clasp push",
+    "pull": "clasp pull"
+  },
+  "devDependencies": {
+    "@types/google-apps-script": "^2.0.15",
+    "typescript": "^7.0.2"
+  }
+}

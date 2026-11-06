@@ -26,17 +26,29 @@ It remembers which words were sent recently (in Script Properties), so words don
 
 ## Built with
 
+- TypeScript (strict mode), compiled to plain JavaScript for Apps Script
 - Google Apps Script (V8 runtime)
 - SpreadsheetApp, MailApp, UrlFetchApp, PropertiesService, ScriptApp triggers
 - Free Dictionary API
 - Claude API (Anthropic) with structured outputs
 - [clasp](https://github.com/google/clasp) for local development and version control
 
+## Project structure
+
+```
+src/
+  Code.ts           all the app code, typed against @types/google-apps-script
+  appsscript.json   the Apps Script manifest
+dist/               compiled output that clasp uploads (not committed)
+```
+
+Apps Script runs every file in one global scope and calls trigger functions by name, so `Code.ts` has no imports or exports. TypeScript is used for the types and compile-time checks, and the output is ordinary JavaScript.
+
 ## Setup
 
 1. Create a Google Form with the questions **Word**, **Meaning**, **Context**, **Source** and **Source Type**, and link it to a Google Sheet.
 2. Add a sheet tab called `CoolWords` with the headers: Word, Meaning, Context, Source, Date added.
-3. Open **Extensions > Apps Script** from the sheet and add `Code.js`.
+3. Open **Extensions > Apps Script** from the sheet, then build and push the code from this repo (see below).
 4. Add an installable trigger: `onFormSubmit`, *From spreadsheet*, *On form submit*.
 5. Optional, for the AI section: get an API key from [console.anthropic.com](https://console.anthropic.com) and add it under **Project Settings > Script Properties** as `ANTHROPIC_API_KEY`. Run `testWordCoach` to check it works.
 6. Run `createWordOfTheDayTrigger` once to schedule the daily email (default 8:00 in the script's time zone; change `WOTD_SEND_HOUR` to adjust).
@@ -46,6 +58,10 @@ It remembers which words were sent recently (in Script Properties), so words don
 ```bash
 npm install -g @google/clasp
 clasp login
-clasp pull   # get the latest from Apps Script
-clasp push   # send local changes back
+npm install
+npm run typecheck   # check types without building
+npm run build       # compile src/ into dist/
+npm run push        # build, then upload dist/ to Apps Script
 ```
+
+Make changes in `src/`, not in the online Apps Script editor: the next `npm run push` replaces whatever is online with the compiled code.

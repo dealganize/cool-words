@@ -1,8 +1,89 @@
-function onFormSubmit(e) {
-  const vocabulary = e.source.getSheetByName("CoolWords");
+// CoolWords: a Google Apps Script project, written in TypeScript and compiled
+// to plain JavaScript with `npm run build` before clasp uploads it.
+//
+// There are no imports or exports on purpose: Apps Script runs every file in
+// one global scope, and triggers call these functions by name.
+
+// ---------- Types ----------
+
+type Sheet = GoogleAppsScript.Spreadsheet.Sheet;
+type Range = GoogleAppsScript.Spreadsheet.Range;
+type CellValue = string | number | boolean | Date;
+
+// Apps Script passes the spreadsheet as `source` on form-submit events,
+// but the published type definitions leave it out.
+type FormSubmitEvent = GoogleAppsScript.Events.SheetsOnFormSubmit & {
+  source: GoogleAppsScript.Spreadsheet.Spreadsheet;
+};
+
+interface WordEntry {
+  row: CellValue[];
+  sourceColour: string;
+}
+
+interface DictionaryExample {
+  partOfSpeech: string;
+  definition: string;
+  example: string;
+}
+
+interface DictionaryInfo {
+  phonetic: string;
+  partsOfSpeech: string[];
+  examples: DictionaryExample[];
+  synonyms: string[];
+  antonyms: string[];
+}
+
+interface WordCoach {
+  sentences: string[];
+  memoryTip: string;
+  quizSentence: string;
+  quizOptions: string[];
+}
+
+// Shape of the Free Dictionary API response (only the fields used here)
+interface DictionaryApiDefinition {
+  definition: string;
+  example?: string;
+  synonyms?: string[];
+  antonyms?: string[];
+}
+
+interface DictionaryApiMeaning {
+  partOfSpeech: string;
+  definitions?: DictionaryApiDefinition[];
+  synonyms?: string[];
+  antonyms?: string[];
+}
+
+interface DictionaryApiResult {
+  phonetic?: string;
+  phonetics?: { text?: string }[];
+  meanings?: DictionaryApiMeaning[];
+}
+
+// Shape of a Claude Messages API response (only the fields used here)
+interface ClaudeMessage {
+  stop_reason: string | null;
+  content?: { type: string; text?: string }[];
+}
+
+// ---------- Collecting words from the form ----------
+
+const SHEET_NAME = "CoolWords";
+
+function getWordsSheet(spreadsheet: GoogleAppsScript.Spreadsheet.Spreadsheet): Sheet {
+  const sheet = spreadsheet.getSheetByName(SHEET_NAME);
+  if (!sheet) throw new Error(`No sheet called "${SHEET_NAME}" in this spreadsheet`);
+  return sheet;
+}
+
+function onFormSubmit(e: FormSubmitEvent): void {
+  const vocabulary = getWordsSheet(e.source);
   const answers = e.namedValues;
 
-  const getAnswer = (...names) => {
+  const getAnswer = (...names: string[]): string => {
     for (const name of names) {
       if (answers[name]?.[0]) return answers[name][0].trim();
     }
@@ -19,7 +100,7 @@ function onFormSubmit(e) {
   if (!word) return;
 
   const lastRow = vocabulary.getLastRow();
-  const rows =
+  const rows: CellValue[][] =
     lastRow > 1
       ? vocabulary.getRange(2, 1, lastRow - 1, 5).getValues()
       : [];
@@ -28,29 +109,17 @@ function onFormSubmit(e) {
     row => String(row[0]).trim().toLowerCase() === word.toLowerCase()
   );
 
-if (existingIndex === -1) {
-  vocabulary.insertRowBefore(2);
+  if (existingIndex === -1) {
+    vocabulary.insertRowBefore(2);
 
-  vocabulary
-    .getRange(2, 1, 1, 5)
-    .setValues([[
-      word,
-      definition,
-      context,
-      source,
-      date
-    ]]);
+    vocabulary
+      .getRange(2, 1, 1, 5)
+      .setValues([[word, definition, context, source, date]]);
 
-  vocabulary.getRange(2, 5).setNumberFormat("d-M-yy");
-
-  const colour = getSourceColour(sourceType);
-
-  if (colour) {
-    vocabulary.getRange(2, 4).setBackground(colour);
+    vocabulary.getRange(2, 5).setNumberFormat("d-M-yy");
+    vocabulary.getRange(2, 4).setBackground(getSourceColour(sourceType));
+    return;
   }
-
-  return;
-}
 
   const rowNumber = existingIndex + 2;
   const existing = rows[existingIndex];
@@ -63,7 +132,7 @@ if (existingIndex === -1) {
   appendUnique(vocabulary.getRange(rowNumber, 4), source);
 }
 
-function appendUnique(cell, newText) {
+function appendUnique(cell: Range, newText: string): void {
   if (!newText) return;
 
   const currentText = String(cell.getValue()).trim();
@@ -76,23 +145,23 @@ function appendUnique(cell, newText) {
   }
 }
 
-function getSourceColour(sourceType) {
+const SOURCE_COLOURS: Record<string, string> = {
+  "book": "#d9ead3",
+  "podcast": "#fff2cc",
+  "article/news": "#d0e8e6",
+  "film/tv show/video game": "#eadcf8",
+  "internet": "#fce5cd",
+  "conversation/everyday life": "#f4cccc",
+  "other": "#d9d9d9"
+};
+
+function getSourceColour(sourceType: string): string {
   const normalized = String(sourceType)
     .trim()
     .toLowerCase()
     .replace(/\s*\/\s*/g, "/");
 
-  const colours = {
-    "book": "#d9ead3",
-    "podcast": "#fff2cc",
-    "article/news": "#d0e8e6",
-    "film/tv show/video game": "#eadcf8",
-    "internet": "#fce5cd",
-    "conversation/everyday life": "#f4cccc",
-    "other": "#d9d9d9"
-  };
-
-  return colours[normalized] || "#ffffff";
+  return SOURCE_COLOURS[normalized] || "#ffffff";
 }
 
 // ---------- Word of the Day ----------
@@ -101,18 +170,18 @@ const WOTD_SEND_HOUR = 8; // 24h clock, in the script's time zone
 const WOTD_SENT_KEY = "WOTD_RECENTLY_SENT";
 const WOTD_DEFAULT_LABELS = ["Word", "Meaning", "Context", "Source", "Date added"];
 
-function sendWordOfTheDay() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("CoolWords");
+function sendWordOfTheDay(): void {
+  const sheet = getWordsSheet(SpreadsheetApp.getActiveSpreadsheet());
   const lastRow = sheet.getLastRow();
   const lastColumn = sheet.getLastColumn();
 
   if (lastRow < 2) return;
 
-  const headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
-  const rows = sheet.getRange(2, 1, lastRow - 1, lastColumn).getValues();
+  const headers: CellValue[] = sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
+  const rows: CellValue[][] = sheet.getRange(2, 1, lastRow - 1, lastColumn).getValues();
   const sourceColours = sheet.getRange(2, 4, lastRow - 1, 1).getBackgrounds();
 
-  const entries = rows
+  const entries: WordEntry[] = rows
     .map((row, i) => ({ row, sourceColour: sourceColours[i][0] }))
     .filter(entry => String(entry.row[0]).trim());
 
@@ -133,10 +202,10 @@ function sendWordOfTheDay() {
   });
 }
 
-function pickWordOfTheDay(entries) {
+function pickWordOfTheDay(entries: WordEntry[]): WordEntry {
   const props = PropertiesService.getScriptProperties();
-  const key = entry => String(entry.row[0]).trim().toLowerCase();
-  let recent = JSON.parse(props.getProperty(WOTD_SENT_KEY) || "[]");
+  const key = (entry: WordEntry) => String(entry.row[0]).trim().toLowerCase();
+  let recent: string[] = JSON.parse(props.getProperty(WOTD_SENT_KEY) || "[]");
 
   let pool = entries.filter(entry => !recent.includes(key(entry)));
 
@@ -155,7 +224,7 @@ function pickWordOfTheDay(entries) {
   return entry;
 }
 
-function lookupWord(word) {
+function lookupWord(word: string): DictionaryInfo | null {
   try {
     const response = UrlFetchApp.fetch(
       "https://api.dictionaryapi.dev/api/v2/entries/en/" + encodeURIComponent(word.toLowerCase()),
@@ -164,15 +233,15 @@ function lookupWord(word) {
 
     if (response.getResponseCode() !== 200) return null;
 
-    const results = JSON.parse(response.getContentText());
+    const results: DictionaryApiResult[] = JSON.parse(response.getContentText());
     const phonetic = results
       .flatMap(result => [result.phonetic, ...(result.phonetics || []).map(p => p.text)])
       .find(Boolean) || "";
 
-    const partsOfSpeech = new Set();
-    const examples = [];
-    const synonyms = new Set();
-    const antonyms = new Set();
+    const partsOfSpeech = new Set<string>();
+    const examples: DictionaryExample[] = [];
+    const synonyms = new Set<string>();
+    const antonyms = new Set<string>();
 
     results.forEach(result => {
       (result.meanings || []).forEach(meaning => {
@@ -242,7 +311,7 @@ const WORD_COACH_SCHEMA = {
   additionalProperties: false
 };
 
-function askWordCoach(word, meaning, context) {
+function askWordCoach(word: string, meaning: string, context: string): WordCoach | null {
   const apiKey = PropertiesService.getScriptProperties().getProperty("ANTHROPIC_API_KEY");
   if (!apiKey) return null;
 
@@ -283,16 +352,16 @@ function askWordCoach(word, meaning, context) {
       return null;
     }
 
-    const message = JSON.parse(response.getContentText());
+    const message: ClaudeMessage = JSON.parse(response.getContentText());
     if (message.stop_reason !== "end_turn") {
       console.warn("Word coach stopped early: " + message.stop_reason);
       return null;
     }
 
     const textBlock = (message.content || []).find(block => block.type === "text");
-    if (!textBlock) return null;
+    if (!textBlock?.text) return null;
 
-    const coach = JSON.parse(textBlock.text);
+    const coach: WordCoach = JSON.parse(textBlock.text);
     coach.quizOptions = shuffle(coach.quizOptions);
     return coach;
   } catch (err) {
@@ -301,7 +370,7 @@ function askWordCoach(word, meaning, context) {
   }
 }
 
-function shuffle(items) {
+function shuffle<T>(items: T[]): T[] {
   const copy = [...items];
   for (let i = copy.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -311,33 +380,40 @@ function shuffle(items) {
 }
 
 // Run by hand from the Apps Script editor to check the AI section without sending an email
-function testWordCoach() {
+function testWordCoach(): void {
   console.log(JSON.stringify(askWordCoach("sonder", "the realisation that every passer-by has a life as vivid as your own", ""), null, 2));
 }
 
-function getColumnLabel(headers, i) {
+// ---------- Email building ----------
+
+function getColumnLabel(headers: CellValue[], i: number): string {
   return String(headers[i] || WOTD_DEFAULT_LABELS[i] || `Column ${i + 1}`).trim();
 }
 
-function buildWordOfTheDayHtml(entry, headers, dictionary, coach) {
+function buildWordOfTheDayHtml(
+  entry: WordEntry,
+  headers: CellValue[],
+  dictionary: DictionaryInfo | null,
+  coach: WordCoach | null
+): string {
   const word = String(entry.row[0]).trim();
   const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "EEEE d MMMM");
-  const lines = value => String(value || "").split("\n").map(s => s.trim()).filter(Boolean);
+  const lines = (value: CellValue) => String(value || "").split("\n").map(s => s.trim()).filter(Boolean);
 
-  const label = text =>
+  const label = (text: string) =>
     `<div style="font-family:Arial,sans-serif;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#8a8a8a;font-weight:bold;margin-bottom:10px;">${text}</div>`;
 
-  const section = (title, content) => content ? `
+  const section = (title: string, content: string) => content ? `
     <tr><td style="padding:24px 32px 0;">
       ${label(title)}
       ${content}
     </td></tr>` : "";
 
-  const chip = (text, colour) =>
+  const chip = (text: string, colour: string) =>
     `<span style="display:inline-block;padding:4px 12px;margin:0 6px 6px 0;border-radius:14px;border:1px solid #dddddd;background:${colour};font-family:Arial,sans-serif;font-size:13px;color:#333333;">${escapeHtml(text)}</span>`;
 
   // Columns: 0 Word, 1 Meaning, 2 Context, 3 Source, 4 Date added, then any extras
-  const formatCell = (value, i) => {
+  const formatCell = (value: CellValue, i: number): string => {
     if (!String(value).trim()) return `<span style="color:#bbbbbb;">—</span>`;
     if (value instanceof Date) return escapeHtml(describeDateAdded(value));
     if (i === 0) return `<b style="font-size:18px;">${escapeHtml(value)}</b>`;
@@ -416,8 +492,12 @@ function buildWordOfTheDayHtml(entry, headers, dictionary, coach) {
 </div>`;
 }
 
-
-function buildWordOfTheDayText(entry, headers, dictionary, coach) {
+function buildWordOfTheDayText(
+  entry: WordEntry,
+  headers: CellValue[],
+  dictionary: DictionaryInfo | null,
+  coach: WordCoach | null
+): string {
   const parts = ["COOL WORD OF THE DAY: " + String(entry.row[0]).trim(), ""];
 
   entry.row.forEach((value, i) => {
@@ -440,8 +520,8 @@ function buildWordOfTheDayText(entry, headers, dictionary, coach) {
   return parts.join("\n");
 }
 
-function describeDateAdded(value) {
-  if (!(value instanceof Date) || isNaN(value)) return value ? String(value) : "";
+function describeDateAdded(value: CellValue): string {
+  if (!(value instanceof Date) || isNaN(value.getTime())) return value ? String(value) : "";
 
   const formatted = Utilities.formatDate(value, Session.getScriptTimeZone(), "d MMMM yyyy");
   const days = Math.floor((Date.now() - value.getTime()) / 86400000);
@@ -455,7 +535,7 @@ function describeDateAdded(value) {
   return `${formatted} (${ago})`;
 }
 
-function escapeHtml(value) {
+function escapeHtml(value: CellValue | null | undefined): string {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -463,12 +543,14 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
-function escapeWithBreaks(value) {
+function escapeWithBreaks(value: CellValue): string {
   return escapeHtml(value).replace(/\n/g, "<br>");
 }
 
+// ---------- Setup ----------
+
 // Run this once by hand to schedule the daily email
-function createWordOfTheDayTrigger() {
+function createWordOfTheDayTrigger(): void {
   ScriptApp.getProjectTriggers()
     .filter(trigger => trigger.getHandlerFunction() === "sendWordOfTheDay")
     .forEach(trigger => ScriptApp.deleteTrigger(trigger));
