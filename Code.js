@@ -213,7 +213,8 @@ function lookupWord(word) {
 // ANTHROPIC_API_KEY. It is never stored in the code. If the key is missing
 // or the call fails, the email still goes out without the AI section.
 
-const CLAUDE_MODEL = "claude-opus-5-5";
+// Haiku is the cheapest Claude model: about 2 cents a month for one email a day
+const CLAUDE_MODEL = "claude-haiku-5-5";
 
 const WORD_COACH_SCHEMA = {
   type: "object",
@@ -264,13 +265,11 @@ function askWordCoach(word, meaning, context) {
       muteHttpExceptions: true,
       headers: {
         "x-api-key": apiKey,
-        "anthropic-version": "2026-10-21",
-        "anthropic-beta": "server-side-fallback-2026-07-01"
+        "anthropic-version": "2026-10-21"
       },
       payload: JSON.stringify({
         model: CLAUDE_MODEL,
         max_tokens: 4000,
-        fallbacks: "default",
         output_config: {
           effort: "low",
           format: { type: "json_schema", schema: WORD_COACH_SCHEMA }

@@ -22,7 +22,7 @@ It remembers which words were sent recently (in Script Properties), so words don
 - The API key lives in **Script Properties**, never in the code.
 - If the key is missing, the request fails or the model doesn't finish, the function returns `null` and the email goes out without the AI section. The daily email never breaks because of the AI call.
 - Quiz options are shuffled in code, so the right answer isn't always in the same place.
-- It runs once a day at low effort, so the cost is very small.
+- It uses Claude Haiku 5.5, the cheapest model, at low effort. One email a day costs about 2 cents a month.
 
 ## Built with
 
