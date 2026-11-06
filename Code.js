@@ -400,7 +400,7 @@ function buildWordOfTheDayHtml(entry, headers, dictionary, coach) {
       ${subtitle ? `<div style="font-size:16px;margin-top:4px;color:#dcdaf7;">${escapeHtml(subtitle)}</div>` : ""}
     </td></tr>
     ${section("From your CoolWords sheet", detailsHtml)}
-    ${section("Your AI word coach", coachHtml)}
+    ${section("AI word coach", coachHtml)}
     ${section("More ways to use it", examplesHtml)}
     ${section("Similar words", synonymsHtml)}
     ${section("Opposites", antonymsHtml)}
